@@ -1,0 +1,13 @@
+# ROS2 colcon 編譯產生的目錄
+build/
+install/
+log/
+
+# Python 虛擬環境
+.venv/
+
+# IDE 設定（可選，看你要不要追蹤）
+.vscode/
+
+# Claude Code 設定（可選）
+.claude/
