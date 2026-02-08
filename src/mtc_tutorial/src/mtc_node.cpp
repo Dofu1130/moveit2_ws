@@ -162,145 +162,154 @@ mtc::Task MTCTaskNode::createTask() {
 
     // 階段 2：打開夾爪
     // 使用關節插值規劃器將夾爪移動到 "open" 姿態
-    auto stage_open_hand = std::make_unique<mtc::stages::MoveTo>(
-        "open hand", interpolation_planner);
-    stage_open_hand->setGroup(hand_group_name); // 設定要控制的群組
-    stage_open_hand->setGoal("open");           // 目標姿態名稱
-    task.add(std::move(stage_open_hand));       // 將階段加入任務
+    {
+        auto stage = std::make_unique<mtc::stages::MoveTo>(
+            "open hand", interpolation_planner);
+        stage->setGroup(hand_group_name);  // 設定要控制的群組
+        stage->setGoal("open");            // 目標姿態名稱
+        task.add(std::move(stage));        // 將階段加入任務
+    }
 
     // 階段 3：移動到抓取位置（Connector 類型）
     // Connect 會連接「打開夾爪後的狀態」和「抓取位置」，自動規劃中間的路徑
-    auto stage_move_to_pick = std::make_unique<mtc::stages::Connect>(
-        "move to pick", mtc::stages::Connect::GroupPlannerVector{
-                            {arm_group_name, sampling_planner}});
-    stage_move_to_pick->setTimeout(5.0); // 規劃超時時間 5 秒
-    stage_move_to_pick->properties().configureInitFrom(
-        mtc::Stage::PARENT); // 從父階段繼承屬性
-    task.add(std::move(stage_move_to_pick));
+    {
+        auto stage = std::make_unique<mtc::stages::Connect>(
+            "move to pick", mtc::stages::Connect::GroupPlannerVector{
+                                {arm_group_name, sampling_planner}});
+        stage->setTimeout(5.0);  // 規劃超時時間 5 秒
+        stage->properties().configureInitFrom(mtc::Stage::PARENT);  // 從父階段繼承屬性
+        task.add(std::move(stage));
+    }
 
     // 用於稍後傳遞給放置姿態生成器（本範例未使用）
     mtc::Stage* attach_object_stage =
-        nullptr; // Forward attach_object_stage to place pose generator
-                 // 用於將附加物件的階段傳遞給放置姿態生成器
+        nullptr;  // Forward attach_object_stage to place pose generator
+                  // 用於將附加物件的階段傳遞給放置姿態生成器
 
     // 建立一個 SerialContainer（串列容器）來包含抓取相關的所有子階段
     // 這樣可以把多個階段組織在一起，形成一個「抓取」的邏輯單元
-    auto grasp = std::make_unique<mtc::SerialContainer>("pick object");
-    // 將任務的屬性暴露給這個容器
-    task.properties().exposeTo(grasp->properties(),
-                               {"eef", "group", "ik_frame"});
-    // 從父階段繼承這些屬性
-    grasp->properties().configureInitFrom(mtc::Stage::PARENT,
-                                          {"eef", "group", "ik_frame"});
+    {
+        auto grasp = std::make_unique<mtc::SerialContainer>("pick object");
+        // 將任務的屬性暴露給這個容器
+        task.properties().exposeTo(grasp->properties(),
+                                   {"eef", "group", "ik_frame"});
+        // 從父階段繼承這些屬性
+        grasp->properties().configureInitFrom(mtc::Stage::PARENT,
+                                              {"eef", "group", "ik_frame"});
 
-    // 階段 4：接近物件（Propagator 類型）
-    // 使用笛卡爾路徑規劃器，沿直線慢慢靠近物件
-    auto stage_approach = std::make_unique<mtc::stages::MoveRelative>(
-        "approach object", cartesian_planner);
-    stage_approach->properties().set("marker_ns",
-                                     "approach_object");  // RViz 標記命名空間
-    stage_approach->properties().set("link", hand_frame); // 移動的連結
-    stage_approach->properties().configureInitFrom(mtc::Stage::PARENT,
-                                                   {"group"});
-    stage_approach->setMinMaxDistance(0.1, 0.15); // 移動距離：10-15 公分
+        // 階段 4：接近物件（Propagator 類型）
+        // 使用笛卡爾路徑規劃器，沿直線慢慢靠近物件
+        {
+            auto stage = std::make_unique<mtc::stages::MoveRelative>(
+                "approach object", cartesian_planner);
+            stage->properties().set("marker_ns", "approach_object");  // RViz 標記命名空間
+            stage->properties().set("link", hand_frame);  // 移動的連結
+            stage->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
+            stage->setMinMaxDistance(0.1, 0.15);  // 移動距離：10-15 公分
 
-    // Set hand forward direction
-    // 設定移動方向：沿夾爪的 Z 軸（向前）
-    geometry_msgs::msg::Vector3Stamped vec;
-    vec.header.frame_id = hand_frame;
-    vec.vector.z = 1.0;
-    stage_approach->setDirection(vec);
-    grasp->insert(std::move(stage_approach));
+            // Set hand forward direction
+            // 設定移動方向：沿夾爪的 Z 軸（向前）
+            geometry_msgs::msg::Vector3Stamped vec;
+            vec.header.frame_id = hand_frame;
+            vec.vector.z = 1.0;
+            stage->setDirection(vec);
+            grasp->insert(std::move(stage));
+        }
 
-    // 階段 5：生成抓取姿態（Generator 類型）
-    // 這是一個 Generator！會繞著物件生成多個可能的抓取角度
-    auto stage_generate_grasp =
-        std::make_unique<mtc::stages::GenerateGraspPose>("generate grasp pose");
-    stage_generate_grasp->properties().configureInitFrom(mtc::Stage::PARENT);
-    stage_generate_grasp->properties().set("marker_ns",
-                                           "grasp_pose"); // RViz 標記命名空間
-    stage_generate_grasp->setPreGraspPose("open");        // 抓取前的姿態
-    stage_generate_grasp->setObject("object");            // 要抓取的物件名稱
-    stage_generate_grasp->setAngleDelta(M_PI / 12); // 每 15 度生成一個抓取姿態
-    stage_generate_grasp->setMonitoredStage(
-        current_state_ptr); // Hook into current state
-                            // 監控當前狀態，確保抓取姿態可達
+        // 階段 5：生成抓取姿態（Generator 類型）
+        // 這是一個 Generator！會繞著物件生成多個可能的抓取角度
+        {
+            auto stage = std::make_unique<mtc::stages::GenerateGraspPose>(
+                "generate grasp pose");
+            stage->properties().configureInitFrom(mtc::Stage::PARENT);
+            stage->properties().set("marker_ns", "grasp_pose");  // RViz 標記命名空間
+            stage->setPreGraspPose("open");         // 抓取前的姿態
+            stage->setObject("object");             // 要抓取的物件名稱
+            stage->setAngleDelta(M_PI / 12);        // 每 15 度生成一個抓取姿態
+            stage->setMonitoredStage(current_state_ptr);  // Hook into current state
+                                                          // 監控當前狀態，確保抓取姿態可達
 
-    // 定義抓取座標系的變換（旋轉 + 平移）
-    // 這決定了夾爪相對於物件的姿態
-    Eigen::Isometry3d grasp_frame_transform;
-    Eigen::Quaterniond q =
-        Eigen::AngleAxisd(M_PI / 2,
-                          Eigen::Vector3d::UnitX()) * // 繞 X 軸旋轉 90 度
-        Eigen::AngleAxisd(M_PI / 2,
-                          Eigen::Vector3d::UnitY()) * // 繞 Y 軸旋轉 90 度
-        Eigen::AngleAxisd(M_PI / 2,
-                          Eigen::Vector3d::UnitZ()); // 繞 Z 軸旋轉 90 度
-    grasp_frame_transform.linear() = q.matrix();
-    grasp_frame_transform.translation().z() = 0.1; // 沿 Z 軸偏移 0.1m
+            // 定義抓取座標系的變換（旋轉 + 平移）
+            // 這決定了夾爪相對於物件的姿態
+            Eigen::Isometry3d grasp_frame_transform;
+            Eigen::Quaterniond q =
+                Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitX()) *  // 繞 X 軸旋轉 90 度
+                Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitY()) *  // 繞 Y 軸旋轉 90 度
+                Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ());   // 繞 Z 軸旋轉 90 度
+            grasp_frame_transform.linear() = q.matrix();
+            grasp_frame_transform.translation().z() = 0.1;  // 沿 Z 軸偏移 0.1m
 
-    // Compute IK
-    // 計算逆運動學（IK）：將末端執行器的姿態轉換成關節角度
-    auto wrapper = std::make_unique<mtc::stages::ComputeIK>(
-        "grasp pose IK", std::move(stage_generate_grasp));
-    wrapper->setMaxIKSolutions(8);        // 最多計算 8 個 IK 解
-    wrapper->setMinSolutionDistance(1.0); // 解之間的最小距離
-    wrapper->setIKFrame(grasp_frame_transform, hand_frame); // 設定 IK 座標系
-    wrapper->properties().configureInitFrom(mtc::Stage::PARENT,
-                                            {"eef", "group"});
-    wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE,
-                                            {"target_pose"});
-    grasp->insert(std::move(wrapper));
+            // Compute IK
+            // 計算逆運動學（IK）：將末端執行器的姿態轉換成關節角度
+            auto wrapper = std::make_unique<mtc::stages::ComputeIK>(
+                "grasp pose IK", std::move(stage));
+            wrapper->setMaxIKSolutions(8);         // 最多計算 8 個 IK 解
+            wrapper->setMinSolutionDistance(1.0);  // 解之間的最小距離
+            wrapper->setIKFrame(grasp_frame_transform, hand_frame);  // 設定 IK 座標系
+            wrapper->properties().configureInitFrom(mtc::Stage::PARENT,
+                                                    {"eef", "group"});
+            wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE,
+                                                    {"target_pose"});
+            grasp->insert(std::move(wrapper));
+        }
 
-    // 階段 6：允許碰撞（Propagator 類型）
-    // 修改規劃場景，允許夾爪和物件之間的碰撞
-    // 否則 MoveIt 會認為夾爪碰到物件是錯誤
-    auto stage_allow_collision =
-        std::make_unique<mtc::stages::ModifyPlanningScene>(
-            "allow collision (hand,object)");
-    stage_allow_collision->allowCollisions(
-        "object",
-        task.getRobotModel()
-            ->getJointModelGroup(hand_group_name)
-            ->getLinkModelNamesWithCollisionGeometry(),
-        true); // true = 允許碰撞
-    grasp->insert(std::move(stage_allow_collision));
+        // 階段 6：允許碰撞（Propagator 類型）
+        // 修改規劃場景，允許夾爪和物件之間的碰撞
+        // 否則 MoveIt 會認為夾爪碰到物件是錯誤
+        {
+            auto stage = std::make_unique<mtc::stages::ModifyPlanningScene>(
+                "allow collision (hand,object)");
+            stage->allowCollisions(
+                "object",
+                task.getRobotModel()
+                    ->getJointModelGroup(hand_group_name)
+                    ->getLinkModelNamesWithCollisionGeometry(),
+                true);  // true = 允許碰撞
+            grasp->insert(std::move(stage));
+        }
 
-    // 階段 7：關閉夾爪（Propagator 類型）
-    // 夾住物件
-    auto stage_close_hand = std::make_unique<mtc::stages::MoveTo>(
-        "close hand", interpolation_planner);
-    stage_close_hand->setGroup(hand_group_name);
-    stage_close_hand->setGoal("close"); // 目標姿態：關閉
-    grasp->insert(std::move(stage_close_hand));
+        // 階段 7：關閉夾爪（Propagator 類型）
+        // 夾住物件
+        {
+            auto stage = std::make_unique<mtc::stages::MoveTo>(
+                "close hand", interpolation_planner);
+            stage->setGroup(hand_group_name);
+            stage->setGoal("close");  // 目標姿態：關閉
+            grasp->insert(std::move(stage));
+        }
 
-    // 階段 8：附加物件（Propagator 類型）
-    // 把物件「黏」到夾爪上，之後移動夾爪時物件會跟著動
-    auto stage_attach =
-        std::make_unique<mtc::stages::ModifyPlanningScene>("attach object");
-    stage_attach->attachObject("object", hand_frame); // 將物件附加到夾爪座標系
-    attach_object_stage = stage_attach.get();
-    grasp->insert(std::move(stage_attach));
+        // 階段 8：附加物件（Propagator 類型）
+        // 把物件「黏」到夾爪上，之後移動夾爪時物件會跟著動
+        {
+            auto stage = std::make_unique<mtc::stages::ModifyPlanningScene>(
+                "attach object");
+            stage->attachObject("object", hand_frame);  // 將物件附加到夾爪座標系
+            attach_object_stage = stage.get();
+            grasp->insert(std::move(stage));
+        }
 
-    // 階段 9：抬起物件（Propagator 類型）
-    // 使用笛卡爾路徑規劃器，沿直線向上抬起物件
-    auto stage_lift = std::make_unique<mtc::stages::MoveRelative>(
-        "lift object", cartesian_planner);
-    stage_lift->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
-    stage_lift->setMinMaxDistance(0.1, 0.3); // 抬起距離：10-30 公分
-    stage_lift->setIKFrame(hand_frame);
-    stage_lift->properties().set("marker_ns", "lift_object");
+        // 階段 9：抬起物件（Propagator 類型）
+        // 使用笛卡爾路徑規劃器，沿直線向上抬起物件
+        {
+            auto stage = std::make_unique<mtc::stages::MoveRelative>(
+                "lift object", cartesian_planner);
+            stage->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
+            stage->setMinMaxDistance(0.1, 0.3);  // 抬起距離：10-30 公分
+            stage->setIKFrame(hand_frame);
+            stage->properties().set("marker_ns", "lift_object");
 
-    // Set upward direction
-    // 設定移動方向：沿世界座標的 Z 軸（向上）
-    geometry_msgs::msg::Vector3Stamped vec_lift;
-    vec_lift.header.frame_id = "world";
-    vec_lift.vector.z = 1.0;
-    stage_lift->setDirection(vec_lift);
-    grasp->insert(std::move(stage_lift));
+            // Set upward direction
+            // 設定移動方向：沿世界座標的 Z 軸（向上）
+            geometry_msgs::msg::Vector3Stamped vec;
+            vec.header.frame_id = "world";
+            vec.vector.z = 1.0;
+            stage->setDirection(vec);
+            grasp->insert(std::move(stage));
+        }
 
-    // 將整個抓取容器加入任務
-    task.add(std::move(grasp));
+        // 將整個抓取容器加入任務
+        task.add(std::move(grasp));
+    }
 
     return task;
 }
