@@ -1,8 +1,8 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-版本變更：0.0.0（模板）→ 1.0.0（首次正式憲章）
-變更類型：MINOR（首次完整定義，所有章節均為新增）
+版本變更：1.0.0 → 1.0.1
+變更類型：PATCH（技術堆疊澄清：新增 ROS2 Jazzy 與 UR 機器人支援）
 
 新增章節：
   - 核心原則 I–V（全新）
@@ -97,9 +97,9 @@ SYNC IMPACT REPORT
 
 本工作區的核心技術為：
 
-- **運動規劃框架**：MoveIt2（基於 ROS2 Humble/Iron）
+- **運動規劃框架**：MoveIt2（基於 ROS2 Humble/Iron/Jazzy）
 - **任務規劃**：MoveIt Task Constructor（MTC）
-- **機器人硬體**：Kinova Gen3 Lite（ros2_kortex）
+- **機器人硬體**：Kinova Gen3 Lite（ros2_kortex）、Universal Robots UR5/UR10（ur_robot_driver，噴漆機器人用途）
 - **夾爪**：Robotiq 2F 系列（ros2_robotiq_gripper）
 - **視覺化**：RViz2 + moveit_visual_tools
 - **程式語言**：C++17（核心節點）、Python 3.x（工具腳本、測試）
@@ -136,4 +136,4 @@ SYNC IMPACT REPORT
 
 **合規審查**：每次 `plan.md` 建立時，Constitution Check 章節即作為合規審查的執行記錄。
 
-**版本**：1.0.0 | **批准日期**：2026-03-02 | **最後修訂**：2026-03-02
+**版本**：1.0.1 | **批准日期**：2026-03-02 | **最後修訂**：2026-03-05
